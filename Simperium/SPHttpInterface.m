@@ -8,7 +8,7 @@
 
 #define DEBUG_REQUEST_STATUS
 #import "SPEnvironment.h"
-#import "SPHttpManager.h"
+#import "SPHttpInterface.h"
 #import "Simperium.h"
 #import "SPDiffer.h"
 #import "SPBucket.h"
@@ -37,11 +37,11 @@ static BOOL networkActivity = NO;
 static int ddLogLevel = LOG_LEVEL_INFO;
 NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNotification";
 
-@interface SPHttpManager()
-@property (nonatomic, assign) Simperium *simperium;
-@property (nonatomic, assign) SPBucket *bucket;
-@property (nonatomic, retain) NSMutableArray *responseBatch;
-@property (nonatomic, retain) NSMutableDictionary *versionsWithErrors;
+@interface SPHttpInterface()
+@property (nonatomic, weak) Simperium *simperium;
+@property (nonatomic, weak) SPBucket *bucket;
+@property (nonatomic, strong) NSMutableArray *responseBatch;
+@property (nonatomic, strong) NSMutableDictionary *versionsWithErrors;
 @property (nonatomic, copy) NSString *clientID;
 @property (nonatomic, copy) NSString *remoteBucketName;
 
@@ -51,7 +51,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
 -(void)getVersionFailed:(ASIHTTPRequest *)request;
 @end
 
-@implementation SPHttpManager
+@implementation SPHttpInterface
 @synthesize simperium;
 @synthesize bucket;
 @synthesize responseBatch;
@@ -110,16 +110,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
 -(void)dealloc
 {
 	[getRequest clearDelegatesAndCancel];
-	[getRequest release];
 	[postRequest clearDelegatesAndCancel];
-	[postRequest release];
-    self.clientID = nil;
-    self.indexArray = nil;
-    self.responseBatch = nil;
-    self.versionsWithErrors = nil;
-    self.nextMark = nil;
-    self.remoteBucketName = nil;
-	[super dealloc];
 }
 
 -(void)setBucket:(SPBucket *)aBucket overrides:(NSDictionary *)overrides {
@@ -174,10 +165,10 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
     }
     
     dispatch_async(bucket.processorQueue, ^{
-        if (started) {
-            NSDictionary *change = [bucket.changeProcessor processLocalDeletionWithKey: key];
-            [self sendChange: change forKey: key];
-        }
+        NSDictionary *change = [bucket.changeProcessor processLocalDeletionWithKey: key];
+        
+        // If client is offline and another change is pending, this will overwrite it, which is OK since the object won't exist anymore
+        [self sendChange: change forKey: key];
     });
 }
 
@@ -222,10 +213,8 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
 	// PERFORM GET Content/json on retrieveURL, but it's a long poll
 	// Need callbacks for when changes come in, and when there's an error (or cancelled)
 	NSURL *url = [NSURL URLWithString:getURL];
-    [getURL release];
     
-	[getRequest release];
-	getRequest = [[ASIHTTPRequest requestWithURL:url] retain];
+	getRequest = [ASIHTTPRequest requestWithURL:url];
 	[getRequest addRequestHeader:@"Content-Type" value:@"application/json"];
 	[getRequest addRequestHeader:@"X-Simperium-Token" value:[simperium.user authToken]];
 	[getRequest setDelegate:self]; 
@@ -242,7 +231,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
         return;
     
     dispatch_async(bucket.processorQueue, ^{
-        NSArray *changes = [bucket.changeProcessor processPendingChanges:bucket];
+        NSArray *changes = [bucket.changeProcessor processPendingChanges:bucket onlyQueuedChanges:NO];
         dispatch_async(dispatch_get_main_queue(), ^{
             if ([changes count] == 0) {
                 [self getChanges];
@@ -259,13 +248,11 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
 
             // PERFORM GET
             NSURL *url = [NSURL URLWithString:sendURL];
-            [sendURL release];
             
             NSString *jsonStr = [changes JSONString];
             DDLogVerbose(@"  post data = %@", jsonStr);
             
-            [postRequest release];
-            postRequest = [[ASIHTTPRequest requestWithURL:url] retain];
+            postRequest = [ASIHTTPRequest requestWithURL:url];
             [postRequest appendPostData:[jsonStr dataUsingEncoding:NSUTF8StringEncoding]];
             //[sendRequest addRequestHeader:@"Content-Type" value:@"application/json"];
             [postRequest addRequestHeader:@"X-Simperium-Token" value:[simperium.user authToken]];
@@ -331,7 +318,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
     // TODO: Is this the best and only way to detect when an index of latest versions is needed?
     BOOL bFirstStart = bucket.lastChangeSignature == nil;
     if (bFirstStart) {
-        [self getLatestVersionsForBucket:startBucket];
+        [self requestLatestVersionsForBucket:startBucket];
     } else
         [self startProcessingChanges];
 }
@@ -345,10 +332,8 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
     started = NO;
     // TODO: Make sure it's safe to arbitrarily cancel these requests
     [getRequest clearDelegatesAndCancel];
-	[getRequest release];
     getRequest = nil;
 	[postRequest clearDelegatesAndCancel];
-	[postRequest release];
     postRequest = nil;
     
     // TODO: Consider ensuring threads are done their work and sending a notification
@@ -399,7 +384,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
     if (responseCode == 404) {
         // Perform a re-indexing here
         DDLogVerbose(@"Simperium version not found, initiating re-indexing (%@)", [request originalURL]);
-        [self getLatestVersionsForBucket:self.bucket];
+        [self requestLatestVersionsForBucket:self.bucket];
         return;
     }
 
@@ -412,7 +397,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
         return;
     }
     NSArray *changes = [responseString objectFromJSONStringWithParseOptions:JKParseOptionLooseUnicode];
-    DDLogVerbose(@"GET response received (%@), handling %d changes...", bucket.name, [changes count] );
+    DDLogVerbose(@"GET response received (%@), handling %lu changes...", bucket.name, (unsigned long)[changes count] );
     DDLogDebug(@"  GET response was: %@", responseString);
     
     [self resetRetryDelay];
@@ -509,7 +494,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
 
 #pragma mark Index handling
 
--(void)getLatestVersionsMark:(NSString *)mark
+-(void)requestLatestVersionsMark:(NSString *)mark
 {
     if (!simperium.user) {
         DDLogError(@"Simperium critical error: tried to retrieve index with no user set");
@@ -551,7 +536,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
     [indexRequest startAsynchronous];
 }
 
--(void)getLatestVersionsForBucket:(SPBucket *)b {
+-(void)requestLatestVersionsForBucket:(SPBucket *)b {
     // Multiple errors could try to trigger multiple index refreshes
     if (gettingVersions)
         return;
@@ -562,7 +547,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
         return;
     }
     
-    [self getLatestVersionsMark:nil];
+    [self requestLatestVersionsMark:nil];
 }
 
 -(ASIHTTPRequest *)getRequestForKey:(NSString *)key version:(NSString *)version
@@ -595,16 +580,16 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
     self.responseBatch = [NSMutableArray arrayWithCapacity:INDEX_BATCH_SIZE];
     
     // Get all the latest versions
-    __block ASINetworkQueue *networkQueue = [[ASINetworkQueue queue] retain];
+    ASINetworkQueue *networkQueue = [ASINetworkQueue queue];
     [networkQueue setDelegate:self];
     [networkQueue setQueueDidFinishSelector:@selector(indexQueueFinished:)];
     [networkQueue setRequestDidFinishSelector:@selector(getVersionFinished:)];
     [networkQueue setRequestDidFailSelector:@selector(getVersionFailed:)];
     [networkQueue setMaxConcurrentOperationCount:INDEX_QUEUE_SIZE];
     
-    DDLogInfo(@"Simperium processing %d objects from index (%@)", [currentIndexArray count], bucket.name);
+    DDLogInfo(@"Simperium processing %lu objects from index (%@)", (unsigned long)[currentIndexArray count], bucket.name);
     
-    __block NSArray *indexArrayCopy = [currentIndexArray copy];
+    NSArray *indexArrayCopy = [currentIndexArray copy];
     __block int numVersionRequests = 0;
     dispatch_async(bucket.processorQueue, ^{
         if (started) {
@@ -657,7 +642,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
     
     // Store versions as strings, but if they come off the wire as numbers, then handle that too
     if ([current isKindOfClass:[NSNumber class]])
-        current = [NSString stringWithFormat:@"%d", [current integerValue]];
+        current = [NSString stringWithFormat:@"%ld", (long)[current integerValue]];
     self.pendingLastChangeSignature = [current length] > 0 ? [NSString stringWithFormat:@"%@", current] : nil;
     self.nextMark = [responseDict objectForKey:@"mark"];
     numTransfers--;
@@ -676,7 +661,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
     // If there's another page, get those too (this will repeat until there are none left)
     if (self.nextMark.length > 0) {
         DDLogVerbose(@"Simperium found another index page mark (%@): %@", bucket.name, self.nextMark);
-        [self getLatestVersionsMark:self.nextMark];
+        [self requestLatestVersionsMark:self.nextMark];
         return;
     }
 
@@ -699,7 +684,6 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
             }];
         }
     });
-    [batch release];
     
     [self.responseBatch removeAllObjects];
 }
@@ -773,7 +757,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
 {
     if (self.nextMark.length > 0)
         // More index pages to get
-        [self getLatestVersionsMark:self.nextMark];
+        [self requestLatestVersionsMark:self.nextMark];
     else
         // The entire index has been retrieved
         [self allVersionsFinished:networkQueue];
@@ -782,7 +766,6 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
 -(void)allVersionsFinished:(ASINetworkQueue *)networkQueue
 {
     [self processBatch];
-    [networkQueue release];
     [self resetRetryDelay];
 
     DDLogVerbose(@"Simperium finished processing all objects from index (%@)", bucket.name);
@@ -793,7 +776,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
     if ([self.versionsWithErrors count] > 0) {
         // Try the index refresh again; this could be more efficient since we could know which version requests
         // failed, but it should happen rarely so take the easy approach for now
-        DDLogWarn(@"Index refresh complete (%@) but %d versions didn't load, retrying...", bucket.name, [self.versionsWithErrors count]);
+        DDLogWarn(@"Index refresh complete (%@) but %lu versions didn't load, retrying...", bucket.name, (unsigned long)[self.versionsWithErrors count]);
         
         // Create an array in the expected format
         NSMutableArray *errorArray = [NSMutableArray arrayWithCapacity: [self.versionsWithErrors count]];
@@ -804,7 +787,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
             [errorArray addObject:versionDict];
         }
         [self performSelector:@selector(getVersionsForKeys:) withObject: errorArray afterDelay:1];
-        //[self performSelector:@selector(getLatestVersions) withObject:nil afterDelay:10];
+        //[self performSelector:@selector(requestLatestVersions) withObject:nil afterDelay:10];
         return;
     }
     
@@ -849,15 +832,15 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
     numTransfers--;
     [[self class] updateNetworkActivityIndictator];
     
-    [self performSelector:@selector(getLatestVersionsForBucket:) withObject:self.bucket afterDelay:retry];
+    [self performSelector:@selector(requestLatestVersionsForBucket:) withObject:self.bucket afterDelay:retry];
 }
 
 
 #pragma mark Versions
--(void)getVersions:(int)numVersions forObject:(id<SPDiffable>)object
+-(void)requestVersions:(int)numVersions object:(id<SPDiffable>)object
 {
     // Get all the latest versions
-    ASINetworkQueue *networkQueue = [[ASINetworkQueue queue] retain];
+    ASINetworkQueue *networkQueue = [ASINetworkQueue queue];
     [networkQueue setDelegate:self];
     [networkQueue setQueueDidFinishSelector:@selector(allObjectVersionsFinished:)];
     [networkQueue setRequestDidFinishSelector:@selector(getObjectVersionFinished:)];
@@ -867,7 +850,7 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
     
     NSInteger startVersion = [object.ghost.version integerValue]-1;
     for (NSInteger i=startVersion; i>=1 && i>=startVersion-numVersions; i--) {
-        NSString *versionStr = [NSString stringWithFormat:@"%d", i];
+        NSString *versionStr = [NSString stringWithFormat:@"%ld", (long)i];
         ASIHTTPRequest *versionRequest = [self getRequestForKey:[object simperiumKey] version:versionStr];
         if (!versionRequest)
             return;
@@ -916,7 +899,6 @@ NSString * const AuthenticationDidFailNotification = @"AuthenticationDidFailNoti
 -(void)allObjectVersionsFinished:(ASINetworkQueue *)networkQueue
 {
     DDLogInfo(@"Simperium finished retrieving all versions");
-    [networkQueue release];
 }
 
 -(void)getObjectVersionFailed:(ASIHTTPRequest *)request

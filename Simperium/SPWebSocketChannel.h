@@ -10,41 +10,42 @@
 
 @class Simperium;
 @class SPBucket;
-@class SRWebSocket;
+@class SPWebSocketInterface;
 @protocol SPDiffable;
 
 @interface SPWebSocketChannel : NSObject
 {
-    BOOL gettingVersions;
+    BOOL indexing;
     BOOL started;
+    BOOL retrievingObjectHistory;
     int retryDelay;
     NSString *nextMark;
     NSMutableArray *indexArray;
     NSString *pendingLastChangeSignature;
-    SRWebSocket *webSocket;
+    SPWebSocketInterface *__weak webSocketManager;
     NSString *name;
     int number;
-    NSInteger numTransfers;
+    NSInteger objectVersionsPending;
 }
 
-@property (nonatomic, assign) SRWebSocket *webSocket;
+@property (nonatomic, weak) SPWebSocketInterface *webSocketManager;
 @property (nonatomic, copy) NSString *nextMark;
-@property (nonatomic, retain) NSMutableArray *indexArray;
+@property (nonatomic, strong) NSMutableArray *indexArray;
 @property (nonatomic, copy) NSString *pendingLastChangeSignature;
 @property (nonatomic) int number;
 @property (nonatomic, copy) NSString *name;
 @property (nonatomic) BOOL started;
 
-+(void)setNetworkActivityIndicatorEnabled:(BOOL)enabled;
--(id)initWithSimperium:(Simperium *)s clientID:(NSString *)cid;
--(void)getVersions:(int)numVersions forObject:(id<SPDiffable>)object;
--(void)getLatestVersionsForBucket:(SPBucket *)bucket;
--(void)sendObjectDeletion:(id<SPDiffable>)object;
--(void)sendObjectChanges:(id<SPDiffable>)object;
--(void)shareObject:(id<SPDiffable>)object withEmail:(NSString *)email;
--(void)handleRemoteChanges:(NSArray *)changes bucket:(SPBucket *)bucket;
--(void)handleIndexResponse:(NSString *)responseString bucket:(SPBucket *)bucket;
--(void)handleVersionResponse:(NSString *)responseString bucket:(SPBucket *)bucket;
--(void)startProcessingChangesForBucket:(SPBucket *)bucket;
++ (void)setNetworkActivityIndicatorEnabled:(BOOL)enabled;
+- (id)initWithSimperium:(Simperium *)s clientID:(NSString *)cid;
+- (void)requestVersions:(int)numVersions object:(id<SPDiffable>)object;
+- (void)requestLatestVersionsForBucket:(SPBucket *)bucket;
+- (void)sendObjectDeletion:(id<SPDiffable>)object;
+- (void)sendObjectChanges:(id<SPDiffable>)object;
+- (void)shareObject:(id<SPDiffable>)object withEmail:(NSString *)email;
+- (void)handleRemoteChanges:(NSArray *)changes bucket:(SPBucket *)bucket;
+- (void)handleIndexResponse:(NSString *)responseString bucket:(SPBucket *)bucket;
+- (void)handleVersionResponse:(NSString *)responseString bucket:(SPBucket *)bucket;
+- (void)startProcessingChangesForBucket:(SPBucket *)bucket;
 
 @end

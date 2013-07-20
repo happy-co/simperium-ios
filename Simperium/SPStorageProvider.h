@@ -10,7 +10,7 @@
 
 @protocol SPStorageProvider <NSObject>
 -(BOOL)save;
--(NSArray *)objectsForBucketName:(NSString *)bucketName;
+-(NSArray *)objectsForBucketName:(NSString *)bucketName predicate:(NSPredicate *)predicate;
 -(id)objectForKey:(NSString *)key bucketName:(NSString *)bucketName;
 -(NSArray *)objectsForKeys:(NSSet *)keys bucketName:(NSString *)bucketName;
 -(id)objectAtIndex:(NSUInteger)index bucketName:(NSString *)bucketName;
@@ -24,7 +24,8 @@
 -(void)validateObjectsForBucketName:(NSString *)bucketName;
 -(void)stopManagingObjectWithKey:(NSString *)key;
 -(id<SPStorageProvider>)threadSafeStorage;
-
+-(void)setMetadata:(NSDictionary *)metadata;
+-(NSDictionary *)metadata;
 -(void)stashUnsavedObjects;
 -(NSArray *)stashedObjects;
 -(void)unstashUnsavedObjects;

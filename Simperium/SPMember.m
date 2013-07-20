@@ -24,6 +24,7 @@ NSString * const OP_OBJECT_ADD		= @"+";
 NSString * const OP_OBJECT_REMOVE	= @"-";
 NSString * const OP_INTEGER			= @"I";
 NSString * const OP_LIST			= @"L";
+NSString * const OP_LIST_DMP		= @"dL";
 NSString * const OP_OBJECT			= @"O";
 NSString * const OP_STRING			= @"d";
 
@@ -42,12 +43,6 @@ NSString * const OP_STRING			= @"d";
 	return [NSString stringWithFormat:@"%@ of type %@", keyName, type];
 }
 
--(void)dealloc {
-	[super dealloc];
-	[keyName release];
-	[type release];
-    [modelDefaultValue release];
-}
 
 -(NSDictionary *)diffForAddition:(id)data {
     NSMutableDictionary *diff = [NSMutableDictionary dictionaryWithObjectsAndKeys:
@@ -80,15 +75,6 @@ NSString * const OP_STRING			= @"d";
 	return nil;
 }
 
--(id)toJSON:(id)value {
-	return value;
-}
-
--(id)fromJSON:(id)value {
-	return value;
-}
-
-
 -(id)getValueFromDictionary:(NSDictionary *)dict key:(NSString *)key object:(id<SPDiffable>)object {
     id value = [dict objectForKey: key];
     return value;
@@ -114,34 +100,13 @@ NSString * const OP_STRING			= @"d";
 
 @end
 
-// Could support raw SQL
-
-//-(id)defaultValueAsStringForSQL {
-//	return @"NULL";
-//}
-//
-//-(NSString *)typeAsStringForSQL {
-//	return @"NULL";
-//}
-//
-//-(void)sqlBind:(id)data withStatement:(sqlite3_stmt *)statement queryPosition:(int)position {
-//}
-//
-//
-//-(id)sqlLoadWithStatement:(sqlite3_stmt *) statement queryPosition:(int)position
-//{
-//	// Needs to be overridden by subclasses, one for each type that we support
-//	return nil;
-//}
-
-
 
 /* Could make SPEntity itself a supported member class, and perform diff this way:
  
 -(NSDictionary *)diff: (SPEntity *)otherEntity
 {
 	// changes contains the operations for every key that is different
-	NSMutableDictionary *changes = [[NSMutableDictionary dictionary] autorelease];
+	NSMutableDictionary *changes = [NSMutableDictionary dictionary];
 	
 	if (![self isKindOfClass:[otherEntity class]])
 	{

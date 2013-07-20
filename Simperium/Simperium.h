@@ -41,9 +41,15 @@
     NSString *APIKey;
     NSString *appURL;
     NSString *clientID;   
-    id<SimperiumDelegate> delegate;  
+    id<SimperiumDelegate> __weak delegate;
     SPBinaryManager *binaryManager;
-    Class loginViewControllerClass;
+    SPAuthenticationManager *authManager;
+    
+#if TARGET_OS_IPHONE
+    Class __weak loginViewControllerClass;
+#else
+    Class __weak authWindowControllerClass;
+#endif
 }
 
 // Initializes Simperium.
@@ -83,9 +89,6 @@
 // Shares an object with a particular user's email address (forthcoming).
 //- (void)shareObject:(SPManagedObject *)object withEmail:(NSString *)email;
 
-// Retrieve past versions of data for a particular object.
-- (void)getVersions:(int)numVersions forObject:(SPManagedObject *)object;
-
 // Alternative to setting delegates on each individual bucket (if you want a single handler
 // for everything). If you need to, call this after starting Simperium.
 - (void)setAllBucketDelegates:(id<SPBucketDelegate>)aDelegate;
@@ -97,62 +100,69 @@
 - (NSString *)addBinary:(NSData *)binaryData toObject:(SPManagedObject *)object bucketName:(NSString *)bucketName attributeName:(NSString *)attributeName;
 - (void)addBinaryWithFilename:(NSString *)filename toObject:(SPManagedObject *)object bucketName:(NSString *)bucketName attributeName:(NSString *)attributeName;
 
-/// Saves without syncing (typically not used).
+// Saves without syncing (typically not used).
 - (BOOL)saveWithoutSyncing;
 
 
-/// Set this to true if you need to be able to cancel the authentication dialog.
-@property (nonatomic, assign) BOOL authenticationOptional;
+// Set this to true if you need to be able to cancel the authentication dialog.
+@property (nonatomic) BOOL authenticationOptional;
 
-/// A SimperiumDelegate for system callbacks.
-@property (nonatomic,assign) id<SimperiumDelegate> delegate;
+// A SimperiumDelegate for system callbacks.
+@property (nonatomic, weak) id<SimperiumDelegate> delegate;
 
-/// Toggle verbose logging.
+// Toggle verbose logging.
 @property (nonatomic) BOOL verboseLoggingEnabled;
 
-/// Enables or disables the network.
+// Enables or disables the network.
 @property (nonatomic) BOOL networkEnabled;
 
 // Overrides the built-in authentication flow so you can customize the behavior.
 @property (nonatomic) BOOL authenticationEnabled;
 
 // Toggle websockets (should only be done before starting Simperium).
-@property (nonatomic, assign) BOOL useWebSockets;
+@property (nonatomic) BOOL useWebSockets;
 
-/// Returns the currently authenticated Simperium user.
-@property (nonatomic,retain) SPUser *user;
+// Returns the currently authenticated Simperium user.
+@property (nonatomic,strong) SPUser *user;
 
-/// The full URL used to communicate with Simperium.
+// The full URL used to communicate with Simperium.
 @property (nonatomic,readonly) NSString *appURL;
 
-/// URL to a Simperium server (can be changed to point to a custom installation).
+// URL to a Simperium server (can be changed to point to a custom installation).
 @property (nonatomic,copy) NSString *rootURL;
 
-/// A unique ID for this app (configured at simperium.com).
+// A unique ID for this app (configured at simperium.com).
 @property (nonatomic,readonly) NSString *appID;
 
-/// An access token for this app (generated at simperium.com)
+// An access token for this app (generated at simperium.com).
 @property (nonatomic, readonly) NSString *APIKey;
 
-/// A hashed, unique ID for this client.
-@property (nonatomic, readonly) NSString *clientID;
+// A hashed, unique ID for this client.
+@property (nonatomic, readonly, copy) NSString *clientID;
 
-/// You can implement your own subclass of SPLoginViewController to customize authentication.
-@property (nonatomic, assign) Class loginViewControllerClass;
-
-/// Set this if for some reason you want to use multiple Simperium instances (e.g. unit testing).
+// Set this if for some reason you want to use multiple Simperium instances (e.g. unit testing).
 @property (copy) NSString *label;
 
-/// Optional overrides (used for unit testing).
+// You can implement your own subclass of SPLoginViewController (iOS) or
+// SPLoginWindowController (OSX) to customize authentication.
+#if TARGET_OS_IPHONE
+@property (nonatomic, weak) Class loginViewControllerClass;
+#else
+@property (nonatomic, weak) Class authWindowControllerClass;
+#endif
+
+// Optional overrides (used for unit testing).
 @property (nonatomic, copy) NSDictionary *bucketOverrides;
 
-@property (nonatomic, retain) SPBinaryManager *binaryManager;
+@property (nonatomic, strong) SPBinaryManager *binaryManager;
+
+@property (nonatomic, strong) SPAuthenticationManager *authManager;
 
 
 #if TARGET_OS_IPHONE
-@property (nonatomic, assign) UIViewController *rootViewController;
+@property (nonatomic, weak) UIViewController *rootViewController;
 #else
-@property (nonatomic, assign) NSWindow *window;
+@property (nonatomic, weak) NSWindow *window;
 #endif
 
 @end

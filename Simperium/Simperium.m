@@ -17,8 +17,8 @@
 #import "SPDiffer.h"
 #import "SPGhost.h"
 #import "SPEnvironment.h"
-#import "SPHttpManager.h"
-#import "SPWebSocketManager.h"
+#import "SPHttpInterface.h"
+#import "SPWebSocketInterface.h"
 #import "ASIHTTPRequest.h"
 #import "JSONKit.h"
 #import "NSString+Simperium.h"
@@ -28,7 +28,7 @@
 #import "SPCoreDataStorage.h"
 #import "SPAuthenticationManager.h"
 #import "SPBucket.h"
-#import "SPReferenceManager.h"
+#import "SPRelationshipResolver.h"
 #import "Reachability.h"
 
 #if TARGET_OS_IPHONE
@@ -40,22 +40,21 @@
 
 @interface Simperium() <SPStorageObserver>
 
-@property (nonatomic, retain) SPCoreDataStorage *coreDataStorage;
-@property (nonatomic, retain) SPJSONStorage *JSONStorage;
-@property (nonatomic, retain) NSMutableDictionary *buckets;
-@property (nonatomic, retain) SPAuthenticationManager *authManager;
-@property (nonatomic, retain) id<SPNetworkProvider> network;
-@property (nonatomic, retain) SPReferenceManager *referenceManager;
-@property (nonatomic, assign) BOOL skipContextProcessing;
-@property (nonatomic, assign) BOOL networkManagersStarted;
-@property (nonatomic, assign) BOOL dynamicSchemaEnabled;
-@property (nonatomic, retain) SPReachability *reachability;
+@property (nonatomic, strong) SPCoreDataStorage *coreDataStorage;
+@property (nonatomic, strong) SPJSONStorage *JSONStorage;
+@property (nonatomic, strong) NSMutableDictionary *buckets;
+@property (nonatomic, strong) id<SPNetworkInterface> network;
+@property (nonatomic, strong) SPRelationshipResolver *relationshipResolver;
+@property (nonatomic) BOOL skipContextProcessing;
+@property (nonatomic) BOOL networkManagersStarted;
+@property (nonatomic) BOOL dynamicSchemaEnabled;
+@property (nonatomic, strong) SPReachability *reachability;
 
 
 #if TARGET_OS_IPHONE
-@property (nonatomic, retain) SPLoginViewController *loginViewController;
+@property (nonatomic, strong) SPLoginViewController *loginViewController;
 #else
-@property (nonatomic, retain) SPAuthWindowController *authWindowController;
+@property (nonatomic, strong) SPAuthWindowController *authWindowController;
 #endif
 
 -(BOOL)save;
@@ -78,9 +77,8 @@
 @synthesize useWebSockets = _useWebSockets;
 @synthesize authManager;
 @synthesize network;
-@synthesize referenceManager;
+@synthesize relationshipResolver;
 @synthesize binaryManager;
-@synthesize loginViewControllerClass;
 @synthesize buckets;
 @synthesize appID;
 @synthesize APIKey;
@@ -94,9 +92,11 @@
 #if TARGET_OS_IPHONE
 @synthesize rootViewController;
 @synthesize loginViewController;
+@synthesize loginViewControllerClass;
 #else
 @synthesize window;
 @synthesize authWindowController;
+@synthesize authWindowControllerClass;
 #endif
 
 
@@ -137,15 +137,15 @@ static int ddLogLevel = LOG_LEVEL_INFO;
         
         SPAuthenticationManager *manager = [[SPAuthenticationManager alloc] initWithDelegate:self simperium:self];
         self.authManager = manager;
-        [manager release];
         
-        SPReferenceManager *refManager = [[SPReferenceManager alloc] init];
-        self.referenceManager = refManager;
-        [refManager release];
+        SPRelationshipResolver *resolver = [[SPRelationshipResolver alloc] init];
+        self.relationshipResolver = resolver;
 
 #if TARGET_OS_IPHONE
         loginViewControllerClass = [SPLoginViewController class];
-#endif        
+#else
+        authWindowControllerClass = [SPAuthWindowController class];
+#endif
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(authenticationDidFail)
                                                      name:@"AuthenticationDidFailNotification" object:nil];
     }
@@ -179,62 +179,34 @@ static int ddLogLevel = LOG_LEVEL_INFO;
 -(void)dealloc
 {
     [self stopNetworking];
-    self.buckets = nil;
-    self.binaryManager = nil;
-    self.user = nil;
-    self.authManager = nil;
-    self.coreDataStorage = nil;
-    self.JSONStorage = nil;
-    self.bucketOverrides = nil;
-    self.referenceManager = nil;
     self.rootURL = nil;
-    self.reachability = nil;
-    [appID release];
-    [APIKey release];
-	[appURL release];
-    [label release];
-    
-#if TARGET_OS_IPHONE
-    self.loginViewController = nil;
-#else
-    self.authWindowController = nil;
-#endif
-
-	[super dealloc];
 }
 
 -(void)setClientID:(NSString *)cid {
-    [clientID release];
     clientID = [cid copy];
 }
 
 -(NSString *)clientID {
     if (!clientID || clientID.length == 0) {
-        // Hashed UDID
-        // TODO: revisit due to iOS 5 deprecation
         NSString *agentPrefix;
 #if TARGET_OS_IPHONE
-        NSString *udid = [[UIDevice currentDevice] uniqueIdentifier];
         agentPrefix = @"ios";
 #else
-        // TODO: how should a Mac be identified?
-        NSString *udid = [NSString sp_makeUUID];
         agentPrefix = @"osx";
 #endif
-        clientID = [NSString sp_md5StringFromData:[udid dataUsingEncoding:NSUTF8StringEncoding]];
-        clientID = [[NSString stringWithFormat:@"%@-%@",agentPrefix, clientID] copy];
+        // Unique client ID per session is sufficient
+        NSString *uuid = [NSString sp_makeUUID];
+        clientID = [[NSString stringWithFormat:@"%@-%@", agentPrefix, uuid] copy];
     }
     return clientID;
 }
 
 
 -(void)setLabel:(NSString *)aLabel {
-    [label release];
     label = [aLabel copy];
     
     // Set the clientID as well, otherwise certain change operations won't work (since they'll appear to come from
     // the same Simperium instance)
-    [clientID release];
     clientID = [label copy];
 }
 
@@ -281,29 +253,21 @@ static int ddLogLevel = LOG_LEVEL_INFO;
             // Create and start a network manager for it
             SPSchema *schema = [[SPSchema alloc] initWithBucketName:name data:nil];
             schema.dynamic = YES;
-            SPHttpManager *netManager = [[SPHttpManager alloc] initWithSimperium:self appURL:self.appURL clientID:self.clientID];
+            SPHttpInterface *netManager = [[SPHttpInterface alloc] initWithSimperium:self appURL:self.appURL clientID:self.clientID];
             
             // New buckets use JSONStorage by default (you can't manually create a Core Data bucket)
-            bucket = [[SPBucket alloc] initWithSchema:schema storage:self.JSONStorage networkProvider:network referenceManager:self.referenceManager label:self.label];
+            bucket = [[SPBucket alloc] initWithSchema:schema storage:self.JSONStorage networkInterface:network
+                                 relationshipResolver:self.relationshipResolver label:self.label];
             [netManager setBucket:bucket overrides:self.bucketOverrides];
             [buckets setObject:bucket forKey:name];
             [netManager start:bucket name:bucket.name];
             
-            [bucket release];
-            [netManager release];
-            [schema release];
 
         } else
             return nil;
     }
     
     return bucket;
-}
-
--(void)getVersions:(int)numVersions forObject:(id<SPDiffable>)object
-{
-    SPBucket *bucket = [object bucket];
-    [bucket.network getVersions: numVersions forObject: object];
 }
 
 -(void)shareObject:(SPManagedObject *)object withEmail:(NSString *)email
@@ -394,23 +358,25 @@ static int ddLogLevel = LOG_LEVEL_INFO;
         
         if (self.useWebSockets) {
             // For websockets, one network manager for all buckets
-            if (!self.network)
-                self.network = [[SPWebSocketManager alloc] initWithSimperium:self appURL:self.appURL clientID:self.clientID];
-            bucket = [[SPBucket alloc] initWithSchema:schema storage:self.coreDataStorage networkProvider:self.network referenceManager:self.referenceManager label:self.label];
+            if (!self.network) {
+                SPWebSocketInterface *webSocketManager = [[SPWebSocketInterface alloc] initWithSimperium:self appURL:self.appURL clientID:self.clientID];
+                self.network = webSocketManager;
+            }
+            bucket = [[SPBucket alloc] initWithSchema:schema storage:self.coreDataStorage networkInterface:self.network
+                                 relationshipResolver:self.relationshipResolver label:self.label];
         } else {
             // For http, each bucket has its own network manager
-            SPHttpManager *netProvider = [[SPHttpManager alloc] initWithSimperium:self appURL:self.appURL clientID:self.clientID];
-            bucket = [[SPBucket alloc] initWithSchema:schema storage:self.coreDataStorage networkProvider:netProvider referenceManager:self.referenceManager label:self.label];
-            [(SPHttpManager *)netProvider setBucket:bucket overrides:self.bucketOverrides]; // tightly coupled for now; will fix in websockets netmanager
-            [netProvider release];
+            SPHttpInterface *netInterface = [[SPHttpInterface alloc] initWithSimperium:self appURL:self.appURL clientID:self.clientID];
+            bucket = [[SPBucket alloc] initWithSchema:schema storage:self.coreDataStorage networkInterface:netInterface
+                                 relationshipResolver:self.relationshipResolver label:self.label];
+            [(SPHttpInterface *)netInterface setBucket:bucket overrides:self.bucketOverrides]; // tightly coupled for now; will fix in websockets netmanager
         }
-                
+        
         [bucketList setObject:bucket forKey:schema.bucketName];
-        [bucket release];
     }
     
     if (self.useWebSockets) {
-        [(SPWebSocketManager *)self.network loadChannelsForBuckets:bucketList overrides:self.bucketOverrides];
+        [(SPWebSocketInterface *)self.network loadChannelsForBuckets:bucketList overrides:self.bucketOverrides];
     }
     
     return bucketList;
@@ -435,7 +401,6 @@ static int ddLogLevel = LOG_LEVEL_INFO;
 }
 
 -(void)setRootURL:(NSString *)url {
-    [_rootURL release];
     _rootURL = [url copy];
     
     appURL = [[_rootURL stringByAppendingFormat:@"%@/", appID] copy];
@@ -450,7 +415,6 @@ static int ddLogLevel = LOG_LEVEL_INFO;
     // Setup JSON storage
     SPJSONStorage *storage = [[SPJSONStorage alloc] initWithDelegate:self];
     self.JSONStorage = storage;
-    [storage release];
     
     // Network managers (load but don't start yet)
     //[self loadNetworkManagers];
@@ -474,7 +438,6 @@ static int ddLogLevel = LOG_LEVEL_INFO;
     SPCoreDataStorage *storage = [[SPCoreDataStorage alloc] initWithModel:model context:context coordinator:coordinator];
     self.coreDataStorage = storage;
     self.coreDataStorage.delegate = self;
-    [storage release];
     
     // Get the schema from Core Data    
     NSArray *schemas = [self.coreDataStorage exportSchemas];
@@ -484,6 +447,9 @@ static int ddLogLevel = LOG_LEVEL_INFO;
     
     // Each NSManagedObject stores a reference to the bucket in which it's stored
     [self.coreDataStorage setBucketList: self.buckets];
+    
+    // Load metadata for pending references among objects
+    [self.relationshipResolver loadPendingRelationships:self.coreDataStorage];
     
     if (self.binaryManager)
         [self configureBinaryManager:self.binaryManager];
@@ -517,7 +483,6 @@ static int ddLogLevel = LOG_LEVEL_INFO;
     for (id<SPDiffable>object in unsavedObjects) {
         [object.bucket.network sendObjectChanges: object];
     }
-    [unsavedObjects release];
     
     // Send changes for all unsaved, inserted and updated objects
     // The changes will automatically get batched and synced in the next tick
@@ -583,9 +548,8 @@ static int ddLogLevel = LOG_LEVEL_INFO;
     
     // Clear the token and user
     [authManager reset];
-    [user release];
-    user = nil;
-    
+    self.user = nil;
+
     // Don't start network managers again; expect app to handle that
 }
 
@@ -654,7 +618,8 @@ static int ddLogLevel = LOG_LEVEL_INFO;
     if (self.loginViewController && self.rootViewController.presentedViewController == self.loginViewController)
         return;
     
-    self.loginViewController = [[self.loginViewControllerClass alloc] initWithNibName:@"LoginView" bundle:nil];
+    SPLoginViewController *loginController =  [[self.loginViewControllerClass alloc] initWithNibName:@"LoginView" bundle:nil];
+    self.loginViewController = loginController;
     self.loginViewController.authManager = self.authManager;
     
     if (!self.rootViewController) {
@@ -664,20 +629,19 @@ static int ddLogLevel = LOG_LEVEL_INFO;
     }
     
     UIViewController *controller = self.loginViewController;
+    UINavigationController *navController = nil;
     if (self.authenticationOptional) {
-        UINavigationController *navController = [[UINavigationController alloc] initWithRootViewController: self.loginViewController];
+        navController = [[UINavigationController alloc] initWithRootViewController: self.loginViewController];
         controller = navController;
     }
     
     [self.rootViewController presentModalViewController:controller animated:animated];
-    [controller release];
 #else
     if (!authWindowController) {
-        SPAuthWindowController *anAuthWindowController = [[SPAuthWindowController alloc] initWithWindowNibName:@"AuthWindow"];
+        SPAuthWindowController *anAuthWindowController = [[self.authWindowControllerClass alloc] initWithWindowNibName:@"AuthWindow"];
         anAuthWindowController.authManager = self.authManager;
         
-        authWindowController = [anAuthWindowController retain];
-        [anAuthWindowController release];
+        authWindowController = anAuthWindowController;
     }
     
     [[authWindowController window] center];

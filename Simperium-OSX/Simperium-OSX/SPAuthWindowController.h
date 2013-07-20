@@ -20,9 +20,9 @@
     IBOutlet NSMenuItem *logout;
 }
 
-@property (nonatomic, retain) SPAuthenticationManager *authManager;
+@property (nonatomic, strong) SPAuthenticationManager *authManager;
 
 - (IBAction)signinClicked:(id)sender;
-
 - (id)initWithWindowNibName:(NSString *)windowName;
+
 @end

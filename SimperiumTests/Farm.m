@@ -19,6 +19,8 @@
 @synthesize expectedAdditions;
 @synthesize expectedChanges;
 @synthesize expectedDeletions;
+@synthesize expectedVersions;
+@synthesize expectedIndexCompletions;
 @synthesize managedObjectContext = __managedObjectContext;
 @synthesize managedObjectModel = __managedObjectModel;
 @synthesize persistentStoreCoordinator = __persistentStoreCoordinator;
@@ -29,6 +31,8 @@
         done = NO;
         
         self.simperium = [[Simperium alloc] initWithRootViewController:nil];
+        // Some stuff is stored in user prefs / keychain, so be sure to remove it
+        [simperium signOutAndRemoveLocalData:YES];
         
         // Setting a label allows each Simperium instance to store user prefs under a different key
         // (be sure to do this before the call to clearLocalData)
@@ -37,7 +41,7 @@
         [simperium setAuthenticationEnabled:NO];
         [simperium setBucketOverrides:bucketOverrides];
         [simperium setVerboseLoggingEnabled:YES];
-        simperium.useWebSockets = NO;
+        simperium.useWebSockets = YES;
         self.token = aToken;
     }
     return self;
@@ -53,22 +57,17 @@
     
     [simperium setAllBucketDelegates: self];
     
-    // Some stuff is stored in user prefs, so be sure to remove it
-    // (needs to be done after Simperium and its network managers have been started)
-    //[simperium clearLocalData];
-    
     simperium.user = [[SPUser alloc] initWithEmail:USERNAME token:token];
+    for (NSString *bucketName in [simperium.bucketOverrides allKeys]) {
+        [simperium bucketForName:bucketName].notifyWhileIndexing = YES;
+    }
 }
 
-- (void) dealloc {
-    [simperium clearLocalData];
-    [simperium release];
-    [config release];
-    [super dealloc];
+- (void)dealloc {
+    [simperium signOutAndRemoveLocalData:YES];
 }
 
-- (BOOL)waitForCompletion:(NSTimeInterval)timeoutSecs
-{
+- (BOOL)waitForCompletion:(NSTimeInterval)timeoutSecs {
 	NSDate	*timeoutDate = [NSDate dateWithTimeIntervalSinceNow:timeoutSecs];
     
 	do {
@@ -80,24 +79,35 @@
 	return done;
 }
 
-- (BOOL) isDone {
-    return expectedAcknowledgments == 0 && expectedChanges == 0 && expectedAdditions == 0 && expectedDeletions == 0;
+- (BOOL)isDone {
+    return expectedAcknowledgments == 0 && expectedChanges == 0 && expectedAdditions == 0 && expectedDeletions == 0
+        && expectedVersions == 0 && expectedIndexCompletions == 0;
 }
 
-- (void) logUnfulfilledExpectations {
+- (void)resetExpectations {
+    self.expectedAcknowledgments = 0;
+    self.expectedAdditions = 0;
+    self.expectedChanges = 0;
+    self.expectedDeletions = 0;
+    self.expectedVersions = 0;
+    self.expectedIndexCompletions = 0;
+}
+
+- (void)logUnfulfilledExpectations {
     if (![self isDone])
-        NSLog(@"acks: %d changes: %d adds: %d dels: %d", expectedAcknowledgments, expectedChanges, expectedAdditions, expectedDeletions);
+        NSLog(@"acks: %d changes: %d adds: %d dels: %d idxs: %d", expectedAcknowledgments, expectedChanges, expectedAdditions,
+              expectedDeletions, expectedIndexCompletions);
 }
 
-- (void) connect {
+- (void)connect {
     [simperium performSelector:@selector(startNetworkManagers)];
 }
 
-- (void) disconnect {
+- (void)disconnect {
     [simperium performSelector:@selector(stopNetworkManagers)];
 }
 
--(void)bucket:(SPBucket *)bucket didChangeObjectForKey:(NSString *)key forChangeType:(SPBucketChangeType)change {
+-(void)bucket:(SPBucket *)bucket didChangeObjectForKey:(NSString *)key forChangeType:(SPBucketChangeType)change memberNames:(NSArray *)memberNames {
     switch(change) {
         case SPBucketChangeAcknowledge:
             expectedAcknowledgments -= 1;
@@ -113,23 +123,27 @@
     }
 }
 
--(void)bucket:(SPBucket *)bucket willChangeObjectsForKeys:(NSSet *)keys {
+- (void)bucket:(SPBucket *)bucket willChangeObjectsForKeys:(NSSet *)keys {
     
 }
 
--(void)bucketWillStartIndexing:(SPBucket *)bucket {
+- (void)bucketWillStartIndexing:(SPBucket *)bucket {
 }
 
--(void)bucketDidFinishIndexing:(SPBucket *)bucket {
+- (void)bucketDidFinishIndexing:(SPBucket *)bucket {
+    NSLog(@"Simperium bucketDidFinishIndexing: %@", bucket.name);
     
+    // These aren't always used in the tests, so only decrease it if it's been set
+    if (expectedIndexCompletions > 0)
+        expectedIndexCompletions -= 1;
 }
 
--(void)bucketDidAcknowledgeDelete:(SPBucket *)bucket {
+- (void)bucketDidAcknowledgeDelete:(SPBucket *)bucket {
     expectedAcknowledgments -= 1;
 }
 
--(void)bucket:(SPBucket *)bucket didReceiveObjectForKey:(NSString *)key version:(NSString *)version data:(NSDictionary *)data {
-    
+- (void)bucket:(SPBucket *)bucket didReceiveObjectForKey:(NSString *)key version:(NSString *)version data:(NSDictionary *)data {
+    expectedVersions -= 1;
 }
 
 
@@ -182,7 +196,7 @@
     {
         return __managedObjectModel;
     }
-    __managedObjectModel = [[NSManagedObjectModel mergedModelFromBundles:[NSBundle allBundles]] retain];   
+    __managedObjectModel = [NSManagedObjectModel mergedModelFromBundles:[NSBundle allBundles]];   
     return __managedObjectModel;
 }
 

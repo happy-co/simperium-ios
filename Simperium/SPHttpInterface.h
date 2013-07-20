@@ -7,14 +7,14 @@
 //
 
 #import <Foundation/Foundation.h>
-#import "SPNetworkProvider.h"
+#import "SPNetworkInterface.h"
 
 @class Simperium;
 @class ASIHTTPRequest;
 @class SPBucket;
 
-@interface SPHttpManager : NSObject <SPNetworkProvider> {
-    SPBucket *bucket;
+@interface SPHttpInterface : NSObject <SPNetworkInterface> {
+    SPBucket *__weak bucket;
 	ASIHTTPRequest *getRequest;
 	ASIHTTPRequest *postRequest;
     BOOL requestCancelled;
@@ -27,7 +27,7 @@
 }
 
 @property (nonatomic, copy) NSString *nextMark;
-@property (nonatomic, retain) NSMutableArray *indexArray;
+@property (nonatomic, strong) NSMutableArray *indexArray;
 @property(nonatomic, copy) NSString *pendingLastChangeSignature;
 
 +(void)setNetworkActivityIndicatorEnabled:(BOOL)enabled;

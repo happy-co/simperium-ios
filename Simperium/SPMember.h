@@ -20,6 +20,7 @@ extern NSString * const OP_OBJECT_ADD;
 extern NSString * const OP_OBJECT_REMOVE;
 extern NSString * const OP_INTEGER;
 extern NSString * const OP_LIST;
+extern NSString * const OP_LIST_DMP;
 extern NSString * const OP_OBJECT;
 extern NSString * const OP_STRING;
 
@@ -29,8 +30,8 @@ extern NSString * const OP_STRING;
     id modelDefaultValue;
 }
 
-@property (nonatomic, assign, readonly) NSString *keyName;
-@property (nonatomic, assign, readonly) id modelDefaultValue;
+@property (nonatomic, readonly, strong) NSString *keyName;
+@property (nonatomic, readonly, strong) id modelDefaultValue;
 
 -(id)initFromDictionary:(NSDictionary *)dict;
 -(id)defaultValue;
@@ -39,16 +40,8 @@ extern NSString * const OP_STRING;
 -(NSDictionary *)diffForRemoval;
 -(id)getValueFromDictionary:(NSDictionary *)dict key:(NSString *)key object:(id<SPDiffable>)object;
 -(void)setValue:(id)value forKey:(NSString *)key inDictionary:(NSMutableDictionary *)dict;
--(id)fromJSON:(id)value;
--(id)toJSON:(id)value;
 -(NSDictionary *)diff:(id)thisValue otherValue:(id)otherValue;
 -(id)applyDiff:(id)thisValue otherValue:(id)otherValue;
 -(NSDictionary *)transform:(id)thisValue otherValue:(id)otherValue oldValue:(id)oldValue;
-
-// Could potentially support raw SQL
-//-(NSString *)defaultValueAsStringForSQL;
-//-(NSString *)typeAsStringForSQL;
-//-(id)sqlLoadWithStatement:(sqlite3_stmt *) statement queryPosition:(int)position;
-//-(void)sqlBind:(id)data withStatement:(sqlite3_stmt *)statement queryPosition:(int)position;
 
 @end
