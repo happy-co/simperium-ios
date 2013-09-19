@@ -441,7 +441,9 @@ NSString * const CH_DATA            = @"d";
     // Create a new context (to be thread-safe) and fetch the entity from it
     id<SPStorageProvider> storage = [bucket.storage threadSafeStorage];
     id<SPDiffable> object = [storage objectForKey:key bucketName:bucket.name];
-    
+    [object willBeRead];
+    NSLog(@"%@ 4a", [(id)object valueForKey:@"areas"]);
+
     // If the object no longer exists, it was likely previously deleted, in which case this change is no longer
     // relevant
     if (!object) {
@@ -452,7 +454,7 @@ NSString * const CH_DATA            = @"d";
         [self serializeKeysForObjectsWithMoreChanges];
         return nil;
     }
-    
+    NSLog(@"%@ 4b", [(id)object valueForKey:@"areas"]);
     // If there are already changes pending for this entity, mark this entity and come back to it later to get the changes
     if (([changesPending objectForKey:object.simperiumKey] != nil) || later) {
         DDLogVerbose(@"Simperium marking object for sending more changes when ready (%@): %@", bucket.name, object.simperiumKey);

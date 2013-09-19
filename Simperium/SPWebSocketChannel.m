@@ -151,11 +151,15 @@ static int ddLogLevel = LOG_LEVEL_INFO;
         DDLogWarn(@"Simperium tried to send changes for an object with a nil simperiumKey (%@)", self.name);
         return;
     }
-    
+    [[(NSManagedObject *)object managedObjectContext] refreshObject:(id)object mergeChanges:YES];
+    NSLog(@"%@ 1",object);
     dispatch_async(object.bucket.processorQueue, ^{
+        NSLog(@"%@ 2",object);
         NSDictionary *change = [object.bucket.changeProcessor processLocalObjectWithKey:key bucket:object.bucket later:indexing || !started];
+        NSLog(@"%@ 3",object);
         if (change)
             [self sendChange: change forKey: key bucket:object.bucket];
+        NSLog(@"%@ 5",change);
     });
 }
 
